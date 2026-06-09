@@ -4,6 +4,7 @@ import express from 'express'
 import OpenAI from 'openai'
 import { readFile } from 'node:fs/promises'
 import { buildRagContext, retrieveTopK, type ExampleDoc } from './rag'
+import pkg from '../package.json'
 
 function sanitizeEnv(v: string | undefined) {
   // 去掉首尾空白，并移除包裹用的引号/反引号（常见误填：`https://...` 或 "sk-..."）
@@ -92,6 +93,7 @@ app.use(express.json({ limit: '1mb' }))
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
+    version: (pkg as any)?.version || 'unknown',
     provider: 'dashscope',
     keyPresent: Boolean(apiKey),
     keyLength: apiKey ? apiKey.length : 0,
