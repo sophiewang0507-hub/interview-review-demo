@@ -24,6 +24,7 @@ const BASE_URL =
   sanitizeEnv(process.env.DASHSCOPE_BASE_URL) || 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 const MODEL = sanitizeEnv(process.env.DASHSCOPE_MODEL) || 'qwen3.7-max'
 const ENABLE_THINKING = String(process.env.DASHSCOPE_ENABLE_THINKING || '').toLowerCase() === 'true'
+const MAX_TOKENS = Number(process.env.GEN_MAX_TOKENS || 1100)
 
 const apiKey = sanitizeEnv(process.env.DASHSCOPE_API_KEY)
 const client = apiKey
@@ -146,14 +147,17 @@ app.post('/api/analyze', async (req, res) => {
   "level": "优秀"|"合格"|"需改进",
   "summary": "1-2 句总体评价",
   "highlights": ["答得好的点"...] (1-5条),
-  "problems": [{"title":"问题标题","detail":"问题说明","fix":"怎么改"}...] (2-6条),
-  "betterAnswer": "给一个可直接口述的改写示例（中文，必须更细化、更贴近真实面试，包含占位符提示补全信息）",
-  "followUps": ["面试官下一轮最可能追问的问题"...] (3-8条),
+  "problems": [{"title":"问题标题","detail":"问题说明","fix":"怎么改"}...] (2-4条),
+  "betterAnswer": "给一个可直接口述的改写示例（中文，更贴近真实面试，包含占位符提示补全信息）",
+  "followUps": ["面试官下一轮最可能追问的问题"...] (3-6条),
   "rubric": [{"dimension":"维度名","score":0-10整数,"comment":"点评"}...] (4-6条)
 }
 要求：
 1) 结合岗位与题目，评价要具体、可执行；
-2) betterAnswer 需要“像真实候选人在面试里说的”，并且更细化：必须包含以下小节（用换行分段即可）：
+2) betterAnswer 需要“像真实候选人在面试里说的”，同时控制长度以提升响应速度与可读性：
+   - 总字数建议控制在 **450-650 字**（若信息不足，用【占位符】代替，避免编造）
+   - 每个小节尽量 2-4 句话，避免长段落
+   必须包含以下小节（用换行分段即可）：
    - 【30 秒电梯版】1-3 句：先给结论+核心贡献+结果（若缺数值用【指标】占位符）
    - 【2 分钟标准版（STAR）】按 背景/任务/行动/结果/复盘 组织，其中：
      * 行动要写成 3-5 条步骤，并点出关键决策/取舍/风险控制（如回滚、监控、验证口径）
@@ -168,6 +172,7 @@ app.post('/api/analyze', async (req, res) => {
     const completion = await client.chat.completions.create({
       model: MODEL,
       temperature: 0.4,
+      max_tokens: Number.isFinite(MAX_TOKENS) && MAX_TOKENS > 0 ? MAX_TOKENS : 1100,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user },
