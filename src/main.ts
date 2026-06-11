@@ -1,5 +1,5 @@
 import './style.css'
-import { analyzeAnswerStream, type RetrievalHit, type ReviewResult } from './analyze'
+import { analyzeAnswer, type RetrievalHit, type ReviewResult } from './analyze'
 import { addHistory, clearHistory, loadHistory, newId, removeHistory, type HistoryItem } from './history'
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -543,77 +543,6 @@ function hint(msg: string) {
 }
 
 const btnAnalyze = $<HTMLButtonElement>('btnAnalyze')
-let aborter: AbortController | null = null
-
-function renderStreaming(initial?: { retrieval?: RetrievalHit[] }) {
-  outputEl.classList.remove('empty')
-  outputEl.innerHTML = `
-    <div class="stream">
-      <div class="stream-head">
-        <div class="stream-title">生成中</div>
-        <div class="stream-actions">
-          <button id="btnCancel" class="btn btn-ghost btn-small" type="button">
-            <svg class="btn-icon"><use href="#i-eraser"></use></svg>
-            取消
-          </button>
-        </div>
-      </div>
-      <div class="stream-sub">系统正在逐步生成内容；完成后会自动渲染结构化结果。</div>
-      <div id="streamRetrieval"></div>
-      <pre class="stream-box" id="streamBox"></pre>
-    </div>
-  `
-
-  document.getElementById('btnCancel')?.addEventListener('click', () => {
-    aborter?.abort()
-  })
-
-  if (initial?.retrieval?.length) {
-    const container = document.getElementById('streamRetrieval')
-    if (container) {
-      container.innerHTML = `
-        <div class="section" style="margin-top:14px">
-          <div class="section-title">
-            <span class="section-title-inline">
-              <svg class="icon"><use href="#i-book"></use></svg>
-              参考示例（RAG）
-            </span>
-            <span class="section-subtitle">本次生成参考了以下高质量示例模板（仅作结构与表达参考）</span>
-          </div>
-          <div class="retrieval">
-            ${initial.retrieval
-              .map((h) => {
-                const chips: string[] = []
-                if (h.seniority) chips.push(h.seniority)
-                if (h.difficulty) chips.push(h.difficulty)
-                if (h.group) chips.push(h.group)
-                if (h.type) chips.push(h.type)
-                if (Array.isArray(h.tags)) chips.push(...h.tags)
-                const showChips = chips.slice(0, 6)
-                return `
-                  <div class="retrieval-item">
-                    <div class="retrieval-q">${escapeHtml(h.question)}</div>
-                    <div class="retrieval-meta">
-                      ${showChips.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join('')}
-                      <span class="chip chip-weak">score ${Math.round(h.score)}</span>
-                    </div>
-                  </div>
-                `
-              })
-              .join('')}
-          </div>
-        </div>
-      `
-    }
-  }
-}
-
-function appendStreaming(text: string) {
-  const box = document.getElementById('streamBox')
-  if (!box) return
-  box.textContent = (box.textContent || '') + text
-  box.scrollTop = box.scrollHeight
-}
 
 btnAnalyze.addEventListener('click', async () => {
   const role = roleEl.value.trim()
@@ -625,21 +554,10 @@ btnAnalyze.addEventListener('click', async () => {
     return
   }
 
-  aborter?.abort()
-  aborter = new AbortController()
-
   btnAnalyze.disabled = true
   btnAnalyze.textContent = '生成中...'
   try {
-    renderStreaming()
-    const res: ReviewResult = await analyzeAnswerStream(
-      { role, question, answer },
-      {
-        signal: aborter.signal,
-        onMeta: (retrieval) => renderStreaming({ retrieval }),
-        onChunk: (t) => appendStreaming(t),
-      },
-    )
+    const res: ReviewResult = await analyzeAnswer({ role, question, answer })
     renderResult(res)
 
     // 自动保存历史
@@ -658,13 +576,12 @@ btnAnalyze.addEventListener('click', async () => {
     renderHistory()
     hint('已生成并保存到历史')
   } catch (e: any) {
-    const msg = e?.name === 'AbortError' ? '已取消生成' : e?.message || '请检查 Key/网络'
+    const msg = e?.message || '请检查 OpenAI Key/网络'
     hint(`生成失败：${msg}`)
     renderError('生成复盘失败', msg)
   } finally {
     btnAnalyze.disabled = false
     btnAnalyze.textContent = '生成复盘'
-    aborter = null
   }
 })
 
