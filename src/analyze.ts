@@ -151,3 +151,96 @@ export async function analyzeAnswer(input: AnalyzeInput): Promise<ReviewResult> 
   const raw = await resp.json()
   return normalizeResult(raw)
 }
+
+type StreamEvent =
+  | { type: 'meta'; retrieval?: RetrievalHit[] }
+  | { type: 'chunk'; text: string }
+  | { type: 'final'; data: any }
+  | { type: 'error'; message: string }
+
+function parseSseEvents(buffer: string) {
+  // returns { events, rest }
+  const events: { event?: string; data?: string }[] = []
+  let rest = buffer
+  while (true) {
+    const idx = rest.indexOf('\n\n')
+    if (idx < 0) break
+    const raw = rest.slice(0, idx)
+    rest = rest.slice(idx + 2)
+    const lines = raw.split('\n').map((l) => l.trimEnd())
+    let eventName = ''
+    let data = ''
+    for (const line of lines) {
+      if (line.startsWith('event:')) eventName = line.slice('event:'.length).trim()
+      if (line.startsWith('data:')) data += line.slice('data:'.length).trim()
+    }
+    events.push({ event: eventName, data })
+  }
+  return { events, rest }
+}
+
+export async function analyzeAnswerStream(
+  input: AnalyzeInput,
+  opts?: {
+    signal?: AbortSignal
+    onChunk?: (text: string) => void
+    onMeta?: (retrieval?: RetrievalHit[]) => void
+  },
+): Promise<ReviewResult> {
+  const base = (import.meta as any).env?.VITE_API_BASE || ''
+  const url = `${base}/api/analyze-stream`
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+    signal: opts?.signal,
+  })
+
+  if (!resp.ok) {
+    let msg = `请求失败：${resp.status}`
+    try {
+      const err = await resp.json()
+      if (err?.error) msg = String(err.error)
+    } catch {
+      // ignore
+    }
+    throw new Error(msg)
+  }
+
+  if (!resp.body) throw new Error('浏览器不支持流式响应')
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buf = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+
+    const parsed = parseSseEvents(buf)
+    buf = parsed.rest
+
+    for (const e of parsed.events) {
+      const eventName = e.event || ''
+      if (!e.data) continue
+
+      if (eventName === 'chunk') {
+        const payload = JSON.parse(e.data) as StreamEvent
+        if ((payload as any).text) opts?.onChunk?.((payload as any).text)
+      } else if (eventName === 'meta') {
+        const payload = JSON.parse(e.data) as any
+        opts?.onMeta?.(payload?.retrieval)
+      } else if (eventName === 'final') {
+        const payload = JSON.parse(e.data) as any
+        return normalizeResult(payload)
+      } else if (eventName === 'error') {
+        const payload = JSON.parse(e.data) as any
+        throw new Error(payload?.message || '生成失败')
+      }
+    }
+  }
+
+  throw new Error('流式响应提前结束（未收到 final）')
+}
